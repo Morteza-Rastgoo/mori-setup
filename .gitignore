@@ -1,0 +1,26 @@
+# Environment files
+.env
+.env.*
+
+# SSH keys and related files
+.ssh/
+*.pem
+id_*
+*.key
+
+# Logs
+*.log
+logs/
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Ollama specific
+models/ 
