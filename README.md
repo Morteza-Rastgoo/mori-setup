@@ -1,17 +1,20 @@
-# MoriCodingAgent Setup Script
+# MoriCodingAgent
 
-This repository contains the setup script for MoriCodingAgent, an AI agent that works in CLI and helps you write code like Cursor AI. It can connect to local Ollama or remote Ollama server.
+MoriCodingAgent is an AI coding assistant that works in CLI and helps you write code like Cursor AI. It can connect to local Ollama or remote Ollama server.
 
 ## Features
 
 - **Local Setup**: Installs and configures Ollama locally
 - **Remote Setup**: Configures Ollama on a remote server
-- **Automatic Requirements Check**: Verifies system requirements and dependencies
-- **SSH Key Management**: Handles SSH key generation and provides guidance for remote setup
-- **Port Management**: Manages Ollama service ports automatically
+- **Code Analysis**: Analyzes your code and provides insights
+- **Code Improvements**: Suggests code improvements and best practices
+- **Code Explanation**: Explains code in detail
+- **Interactive CLI**: Easy-to-use command-line interface
+- **Multiple Models**: Support for different Ollama models
 
 ## Prerequisites
 
+- Python 3.7+
 - curl
 - SSH and SCP (for remote setup)
 - At least 2GB of free disk space
@@ -21,23 +24,28 @@ This repository contains the setup script for MoriCodingAgent, an AI agent that 
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/yourusername/mori-setup.git
+git clone https://github.com/Morteza-Rastgoo/mori-setup.git
 cd mori-setup
 ```
 
-2. Create a `.env` file for remote setup (optional):
+2. Install Python dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+3. Create a `.env` file for remote setup (optional):
 ```bash
 REMOTE_HOST="your.remote.host"
 REMOTE_USER="your_username"
 REMOTE_PORT=22  # Optional, defaults to 22
 ```
 
-3. Make the script executable:
+4. Make the scripts executable:
 ```bash
-chmod +x setup.sh
+chmod +x setup.sh mori.py
 ```
 
-4. Run the setup:
+5. Run the Ollama setup:
 ```bash
 # For complete setup (local + remote if configured)
 ./setup.sh
@@ -49,9 +57,63 @@ chmod +x setup.sh
 ./setup.sh remote
 ```
 
+## CLI Usage
+
+MoriCodingAgent provides several commands to help with your coding:
+
+### Analyze Code
+```bash
+./mori.py analyze path/to/your/file.py
+```
+Analyzes your code and provides insights about:
+- Code summary
+- Potential improvements
+- Security concerns
+- Code quality
+
+### Suggest Improvements
+```bash
+./mori.py improve path/to/your/file.py
+```
+Suggests specific improvements for:
+- Performance optimizations
+- Code readability
+- Best practices
+- Error handling
+
+### Explain Code
+```bash
+./mori.py explain path/to/your/file.py
+```
+Provides detailed explanation of:
+- Overall purpose
+- How it works
+- Key components
+- Important functions/methods
+
+### Ask Questions
+```bash
+./mori.py ask "How do I implement a binary search in Python?"
+```
+Get answers to coding questions with:
+- Code examples
+- Explanations
+- Best practices
+
+### List Available Models
+```bash
+./mori.py models
+```
+Shows all available Ollama models you can use.
+
+### Using Different Models
+```bash
+./mori.py ask --model codellama "What is a decorator in Python?"
+```
+
 ## How It Works
 
-The setup script provides functionality similar to Cursor AI by:
+The agent works by:
 
 1. **Code Understanding**
    - Analyzes your entire codebase for context
@@ -96,6 +158,11 @@ If you encounter issues:
    - Verify remote host is reachable
    - Check if SSH port is open
    - Verify username has proper access
+
+3. **Ollama Connection Issues**:
+   - Make sure Ollama is running (`ollama serve`)
+   - Check if the port is accessible
+   - Verify the model is downloaded
 
 ## License
 
