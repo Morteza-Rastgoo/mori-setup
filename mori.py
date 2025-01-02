@@ -9,11 +9,13 @@ from rich.markdown import Markdown
 from rich.syntax import Syntax
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
+from rich.progress import Progress
 import requests
 from pathlib import Path
 import subprocess
 import time
 import tempfile
+import glob
 
 console = Console()
 
@@ -24,7 +26,287 @@ class MoriAgent:
         self.model = model
         self.base_url = f"http://{host}:{port}"
         self.context = []
+        self.project_files = {}
+        self.file_relationships = {}
         
+    def scan_project(self, start_path="."):
+        """Scan the project directory and analyze file relationships"""
+        console.print("[green]Scanning project structure...[/green]")
+        
+        # Get all Python files
+        python_files = []
+        for root, _, files in os.walk(start_path):
+            for file in files:
+                if file.endswith('.py'):
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, start_path)
+                    python_files.append(rel_path)
+        
+        with Progress() as progress:
+            task = progress.add_task("[cyan]Analyzing files...", total=len(python_files))
+            
+            for file_path in python_files:
+                try:
+                    with open(file_path, 'r') as f:
+                        content = f.read()
+                        self.project_files[file_path] = {
+                            'content': content,
+                            'imports': self._extract_imports(content),
+                            'classes': self._extract_classes(content),
+                            'functions': self._extract_functions(content)
+                        }
+                except Exception as e:
+                    console.print(f"[yellow]Warning: Could not read {file_path}: {str(e)}[/yellow]")
+                progress.update(task, advance=1)
+        
+        # Analyze relationships
+        self._analyze_relationships()
+        
+    def _extract_imports(self, content):
+        """Extract import statements from code"""
+        imports = []
+        for line in content.split('\n'):
+            line = line.strip()
+            if line.startswith('import ') or line.startswith('from '):
+                imports.append(line)
+        return imports
+        
+    def _extract_classes(self, content):
+        """Extract class names and their methods"""
+        classes = {}
+        current_class = None
+        
+        for line in content.split('\n'):
+            line = line.strip()
+            if line.startswith('class '):
+                class_name = line[6:].split('(')[0].strip()
+                current_class = class_name
+                classes[current_class] = []
+            elif current_class and line.startswith('def '):
+                method_name = line[4:].split('(')[0].strip()
+                classes[current_class].append(method_name)
+        return classes
+        
+    def _extract_functions(self, content):
+        """Extract function names and their parameters"""
+        functions = []
+        for line in content.split('\n'):
+            line = line.strip()
+            if line.startswith('def ') and not line.startswith('    def'):
+                func_name = line[4:].split('(')[0].strip()
+                functions.append(func_name)
+        return functions
+        
+    def _analyze_relationships(self):
+        """Analyze relationships between files"""
+        for file_path, info in self.project_files.items():
+            self.file_relationships[file_path] = {
+                'imports_from': [],
+                'imported_by': [],
+                'related_files': []
+            }
+            
+            # Find import relationships
+            for imp in info['imports']:
+                for other_file, other_info in self.project_files.items():
+                    if other_file == file_path:
+                        continue
+                    
+                    # Check if this file imports from other files
+                    if any(c in imp for c in other_info['classes'].keys()) or \
+                       any(f in imp for f in other_info['functions']):
+                        self.file_relationships[file_path]['imports_from'].append(other_file)
+                        
+                    # Check if other files import from this file
+                    if any(c in '\n'.join(other_info['imports']) for c in info['classes'].keys()) or \
+                       any(f in '\n'.join(other_info['imports']) for f in info['functions']):
+                        self.file_relationships[file_path]['imported_by'].append(other_file)
+            
+            # Find related files (files with similar classes/functions)
+            for other_file, other_info in self.project_files.items():
+                if other_file == file_path:
+                    continue
+                    
+                # Check for similar class names or function names
+                if (set(info['classes'].keys()) & set(other_info['classes'].keys())) or \
+                   (set(info['functions']) & set(other_info['functions'])):
+                    self.file_relationships[file_path]['related_files'].append(other_file)
+                    
+    def get_file_context(self, file_path):
+        """Get context information for a specific file"""
+        if not os.path.exists(file_path):
+            return None
+            
+        rel_path = os.path.relpath(file_path)
+        context = []
+        
+        # If we haven't scanned the project yet, do it now
+        if not self.project_files:
+            self.scan_project()
+        
+        if rel_path in self.file_relationships:
+            relationships = self.file_relationships[rel_path]
+            
+            # Add import relationships
+            if relationships['imports_from']:
+                context.append("This file imports from: " + ", ".join(relationships['imports_from']))
+            if relationships['imported_by']:
+                context.append("This file is imported by: " + ", ".join(relationships['imported_by']))
+            
+            # Add related files
+            if relationships['related_files']:
+                context.append("Related files with similar functionality: " + ", ".join(relationships['related_files']))
+            
+            # Add class and function information
+            if rel_path in self.project_files:
+                file_info = self.project_files[rel_path]
+                if file_info['classes']:
+                    context.append("Classes defined: " + ", ".join(file_info['classes'].keys()))
+                if file_info['functions']:
+                    context.append("Functions defined: " + ", ".join(file_info['functions']))
+        
+        return "\n".join(context)
+
+    def edit_file(self, file_path, instruction):
+        """Edit a file based on user instruction with project context"""
+        if not os.path.exists(file_path):
+            console.print(f"[red]Error: File {file_path} not found[/red]")
+            return
+            
+        try:
+            with open(file_path, 'r') as f:
+                original_code = f.read()
+        except Exception as e:
+            console.print(f"[red]Error reading file: {str(e)}[/red]")
+            return
+            
+        console.print("[green]Analyzing project context...[/green]")
+        context_info = self.get_file_context(file_path)
+        
+        console.print("[green]Analyzing your request...[/green]")
+        
+        # Create the prompt for code modification with context
+        prompt = f"""I want you to modify this code according to the following instruction, taking into account the project context:
+
+        INSTRUCTION: {instruction}
+        
+        PROJECT CONTEXT:
+        {context_info if context_info else "No additional context available"}
+        
+        CURRENT CODE:
+        ```python
+        {original_code}
+        ```
+        
+        Please provide:
+        1. A clear explanation of the changes you'll make
+        2. The complete modified code
+        3. Any potential risks or considerations, especially regarding project dependencies
+        
+        Format your response as follows:
+        ---EXPLANATION---
+        (Your explanation here)
+        
+        ---CODE---
+        (The complete modified code)
+        
+        ---NOTES---
+        (Any additional notes, risks, or considerations)
+        """
+        
+        response = self.generate_response(prompt)
+        if not response:
+            return
+            
+        # Parse the response
+        try:
+            explanation = response.split("---EXPLANATION---")[1].split("---CODE---")[0].strip()
+            new_code = response.split("---CODE---")[1].split("---NOTES---")[0].strip()
+            notes = response.split("---NOTES---")[1].strip()
+        except IndexError:
+            console.print("[red]Error: Couldn't parse the AI response properly[/red]")
+            return
+            
+        # Show the changes
+        console.print("\n[bold blue]Proposed Changes:[/bold blue]")
+        console.print(Markdown(explanation))
+        
+        console.print("\n[bold blue]Modified Code:[/bold blue]")
+        console.print(Syntax(new_code, "python", theme="monokai"))
+        
+        if notes:
+            console.print("\n[bold blue]Additional Notes:[/bold blue]")
+            console.print(Markdown(notes))
+        
+        # Ask for confirmation
+        if Confirm.ask("\nDo you want to apply these changes?"):
+            try:
+                # Create a backup
+                backup_path = f"{file_path}.backup"
+                with open(backup_path, 'w') as f:
+                    f.write(original_code)
+                    
+                # Write the new code
+                with open(file_path, 'w') as f:
+                    f.write(new_code)
+                    
+                console.print(f"[green]Changes applied successfully! Backup saved to {backup_path}[/green]")
+                
+                # Update project context
+                self.scan_project()
+            except Exception as e:
+                console.print(f"[red]Error applying changes: {str(e)}[/red]")
+                console.print("[yellow]Attempting to restore from backup...[/yellow]")
+                try:
+                    with open(backup_path, 'r') as f:
+                        original_code = f.read()
+                    with open(file_path, 'w') as f:
+                        f.write(original_code)
+                    console.print("[green]Successfully restored from backup[/green]")
+                except Exception as restore_error:
+                    console.print(f"[red]Error restoring from backup: {str(restore_error)}[/red]")
+        else:
+            console.print("[yellow]Changes cancelled[/yellow]")
+
+    def analyze_code(self, file_path):
+        """Analyze code with project context"""
+        if not os.path.exists(file_path):
+            console.print(f"[red]Error: File {file_path} not found[/red]")
+            return
+            
+        try:
+            with open(file_path, 'r') as f:
+                code = f.read()
+        except Exception as e:
+            console.print(f"[red]Error reading file: {str(e)}[/red]")
+            return
+            
+        console.print("[green]Analyzing project context...[/green]")
+        context_info = self.get_file_context(file_path)
+        
+        console.print("[green]Analyzing code...[/green]")
+        prompt = f"""Analyze this code and provide insights, taking into account the project context:
+        
+        PROJECT CONTEXT:
+        {context_info if context_info else "No additional context available"}
+        
+        CODE TO ANALYZE:
+        ```python
+        {code}
+        ```
+        
+        Please provide:
+        1. A brief summary
+        2. Potential improvements
+        3. Any security concerns
+        4. Code quality assessment
+        5. Integration considerations with related project files
+        """
+        
+        response = self.generate_response(prompt)
+        if response:
+            console.print(Markdown(response))
+
     def wait_for_ollama(self, timeout=30):
         """Wait for Ollama to become available"""
         start_time = time.time()
@@ -100,37 +382,6 @@ class MoriAgent:
             console.print(f"[red]Error: {str(e)}[/red]")
         return None
 
-    def analyze_code(self, file_path):
-        """Analyze code and provide insights"""
-        if not os.path.exists(file_path):
-            console.print(f"[red]Error: File {file_path} not found[/red]")
-            return
-            
-        try:
-            with open(file_path, 'r') as f:
-                code = f.read()
-        except Exception as e:
-            console.print(f"[red]Error reading file: {str(e)}[/red]")
-            return
-            
-        console.print("[green]Analyzing code...[/green]")
-        prompt = f"""Analyze this code and provide insights:
-        
-        ```python
-        {code}
-        ```
-        
-        Please provide:
-        1. A brief summary
-        2. Potential improvements
-        3. Any security concerns
-        4. Code quality assessment
-        """
-        
-        response = self.generate_response(prompt)
-        if response:
-            console.print(Markdown(response))
-
     def suggest_improvements(self, file_path):
         """Suggest improvements for the code"""
         if not os.path.exists(file_path):
@@ -192,98 +443,6 @@ class MoriAgent:
         response = self.generate_response(prompt)
         if response:
             console.print(Markdown(response))
-
-    def edit_file(self, file_path, instruction):
-        """Edit a file based on user instruction"""
-        if not os.path.exists(file_path):
-            console.print(f"[red]Error: File {file_path} not found[/red]")
-            return
-            
-        try:
-            with open(file_path, 'r') as f:
-                original_code = f.read()
-        except Exception as e:
-            console.print(f"[red]Error reading file: {str(e)}[/red]")
-            return
-            
-        console.print("[green]Analyzing your request...[/green]")
-        
-        # Create the prompt for code modification
-        prompt = f"""I want you to modify this code according to the following instruction:
-        
-        INSTRUCTION: {instruction}
-        
-        CURRENT CODE:
-        ```python
-        {original_code}
-        ```
-        
-        Please provide:
-        1. A clear explanation of the changes you'll make
-        2. The complete modified code
-        3. Any potential risks or considerations
-        
-        Format your response as follows:
-        ---EXPLANATION---
-        (Your explanation here)
-        
-        ---CODE---
-        (The complete modified code)
-        
-        ---NOTES---
-        (Any additional notes, risks, or considerations)
-        """
-        
-        response = self.generate_response(prompt)
-        if not response:
-            return
-            
-        # Parse the response
-        try:
-            explanation = response.split("---EXPLANATION---")[1].split("---CODE---")[0].strip()
-            new_code = response.split("---CODE---")[1].split("---NOTES---")[0].strip()
-            notes = response.split("---NOTES---")[1].strip()
-        except IndexError:
-            console.print("[red]Error: Couldn't parse the AI response properly[/red]")
-            return
-            
-        # Show the changes
-        console.print("\n[bold blue]Proposed Changes:[/bold blue]")
-        console.print(Markdown(explanation))
-        
-        console.print("\n[bold blue]Modified Code:[/bold blue]")
-        console.print(Syntax(new_code, "python", theme="monokai"))
-        
-        if notes:
-            console.print("\n[bold blue]Additional Notes:[/bold blue]")
-            console.print(Markdown(notes))
-        
-        # Ask for confirmation
-        if Confirm.ask("\nDo you want to apply these changes?"):
-            try:
-                # Create a backup
-                backup_path = f"{file_path}.backup"
-                with open(backup_path, 'w') as f:
-                    f.write(original_code)
-                    
-                # Write the new code
-                with open(file_path, 'w') as f:
-                    f.write(new_code)
-                    
-                console.print(f"[green]Changes applied successfully! Backup saved to {backup_path}[/green]")
-            except Exception as e:
-                console.print(f"[red]Error applying changes: {str(e)}[/red]")
-                console.print("[yellow]Attempting to restore from backup...[/yellow]")
-                try:
-                    with open(backup_path, 'r') as f:
-                        original_code = f.read()
-                    with open(file_path, 'w') as f:
-                        f.write(original_code)
-                    console.print("[green]Successfully restored from backup[/green]")
-                except Exception as restore_error:
-                    console.print(f"[red]Error restoring from backup: {str(restore_error)}[/red]")
-        else:
-            console.print("[yellow]Changes cancelled[/yellow]")
 
 @click.group()
 def cli():
