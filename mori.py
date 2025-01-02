@@ -29,6 +29,7 @@ class MoriAgent:
         self.project_files = {}
         self.file_relationships = {}
         self.max_iterations = 5  # Maximum number of improvement iterations
+        self.test_results = {}  # Store test results
         
     def scan_project(self, start_path="."):
         """Scan the project directory and analyze file relationships"""
@@ -445,6 +446,142 @@ class MoriAgent:
         if response:
             console.print(Markdown(response))
 
+    def _run_code(self, file_path, test_input=None):
+        """Run the code and capture its output and any errors"""
+        try:
+            # Create a temporary test runner file
+            test_runner = f"""
+import sys
+import io
+import traceback
+from contextlib import redirect_stdout, redirect_stderr
+
+try:
+    # Capture stdout and stderr
+    out = io.StringIO()
+    err = io.StringIO()
+    
+    with redirect_stdout(out), redirect_stderr(err):
+        # Execute the file
+        with open("{file_path}", "r") as f:
+            exec(f.read())
+            
+    # Get the output
+    output = out.getvalue()
+    errors = err.getvalue()
+    
+    print("---OUTPUT---")
+    print(output)
+    print("---ERRORS---")
+    print(errors)
+    print("---STATUS---")
+    print("success")
+    
+except Exception as e:
+    print("---OUTPUT---")
+    print(out.getvalue() if 'out' in locals() else '')
+    print("---ERRORS---")
+    print(traceback.format_exc())
+    print("---STATUS---")
+    print("failure")
+"""
+            with open("test_runner.py", "w") as f:
+                f.write(test_runner)
+                
+            # Run the test runner
+            result = subprocess.run(
+                [sys.executable, "test_runner.py"],
+                capture_output=True,
+                text=True,
+                timeout=30  # 30 second timeout
+            )
+            
+            # Parse the output
+            output = result.stdout
+            sections = {
+                "output": "",
+                "errors": "",
+                "status": "failure"
+            }
+            
+            current_section = None
+            for line in output.split('\n'):
+                if line.startswith('---') and line.endswith('---'):
+                    current_section = line[3:-3].lower()
+                elif current_section:
+                    sections[current_section] = sections.get(current_section, '') + line + '\n'
+            
+            return {
+                'success': sections['status'].strip() == 'success',
+                'output': sections['output'].strip(),
+                'errors': sections['errors'].strip()
+            }
+            
+        except subprocess.TimeoutExpired:
+            return {
+                'success': False,
+                'output': '',
+                'errors': 'Code execution timed out after 30 seconds'
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'output': '',
+                'errors': str(e)
+            }
+        finally:
+            # Clean up
+            if os.path.exists("test_runner.py"):
+                os.remove("test_runner.py")
+                
+    def _evaluate_execution(self, execution_result, goal):
+        """Evaluate the execution results against the goal"""
+        prompt = f"""Evaluate the code execution results against the specified goal:
+
+        GOAL: {goal}
+
+        EXECUTION RESULTS:
+        Success: {execution_result['success']}
+        
+        Output:
+        ```
+        {execution_result['output']}
+        ```
+        
+        Errors:
+        ```
+        {execution_result['errors']}
+        ```
+
+        Please analyze:
+        1. Whether the code runs successfully
+        2. If the output matches expectations
+        3. Any errors or issues found
+        4. Suggestions for fixing problems
+
+        Format your response as follows:
+        ---ACHIEVED---
+        (Yes/No)
+
+        ---FEEDBACK---
+        (Your detailed feedback here)
+        """
+        
+        response = self.generate_response(prompt)
+        if not response:
+            return {'goal_achieved': False, 'feedback': "Failed to evaluate execution"}
+            
+        try:
+            achieved = response.split("---ACHIEVED---")[1].split("---FEEDBACK---")[0].strip().lower()
+            feedback = response.split("---FEEDBACK---")[1].strip()
+            
+            return {
+                'goal_achieved': achieved == 'yes',
+                'feedback': feedback
+            }
+        except Exception:
+            return {'goal_achieved': False, 'feedback': "Failed to parse evaluation"}
+
     def achieve_goal(self, file_path, goal, max_iterations=None):
         """Iteratively improve code until the specified goal is achieved"""
         if not os.path.exists(file_path):
@@ -471,19 +608,42 @@ class MoriAgent:
         while iteration <= self.max_iterations:
             console.print(f"\n[cyan]Iteration {iteration}/{self.max_iterations}[/cyan]")
             
-            # Evaluate current code against goal
-            evaluation = self._evaluate_code(current_code, goal, last_feedback)
+            # Run the current code
+            console.print("[green]Running code...[/green]")
+            execution_result = self._run_code(file_path)
             
-            if evaluation['goal_achieved']:
+            # Show execution results
+            if execution_result['output']:
+                console.print("\n[blue]Output:[/blue]")
+                console.print(execution_result['output'])
+            if execution_result['errors']:
+                console.print("\n[red]Errors:[/red]")
+                console.print(execution_result['errors'])
+                
+            # Evaluate execution results
+            execution_evaluation = self._evaluate_execution(execution_result, goal)
+            
+            # Evaluate code against goal
+            code_evaluation = self._evaluate_code(current_code, goal, last_feedback)
+            
+            # Combine evaluations
+            goal_achieved = execution_evaluation['goal_achieved'] and code_evaluation['goal_achieved']
+            combined_feedback = f"""Code Analysis:
+{code_evaluation['feedback']}
+
+Execution Results:
+{execution_evaluation['feedback']}"""
+            
+            if goal_achieved:
                 console.print("[green]✓ Goal achieved![/green]")
                 break
                 
             # Show current status
             console.print("\n[yellow]Current Status:[/yellow]")
-            console.print(Markdown(evaluation['feedback']))
+            console.print(Markdown(combined_feedback))
             
             # Generate improvements
-            new_code = self._improve_code(current_code, goal, evaluation['feedback'])
+            new_code = self._improve_code(current_code, goal, combined_feedback)
             if not new_code:
                 console.print("[red]Failed to generate improvements[/red]")
                 break
@@ -495,7 +655,7 @@ class MoriAgent:
             # Ask for confirmation
             if Confirm.ask("\nApply these changes?"):
                 current_code = new_code
-                last_feedback = evaluation['feedback']
+                last_feedback = combined_feedback
                 
                 # Create backup
                 backup_path = f"{file_path}.backup.{iteration}"
@@ -516,11 +676,21 @@ class MoriAgent:
         if iteration > self.max_iterations:
             console.print("[yellow]Maximum iterations reached[/yellow]")
             
-        # Final evaluation
-        final_evaluation = self._evaluate_code(current_code, goal, last_feedback)
-        console.print("\n[bold blue]Final Status:[/bold blue]")
-        console.print(Markdown(final_evaluation['feedback']))
+        # Final run and evaluation
+        final_execution = self._run_code(file_path)
+        final_evaluation = self._evaluate_execution(final_execution, goal)
         
+        console.print("\n[bold blue]Final Status:[/bold blue]")
+        if final_execution['output']:
+            console.print("\n[blue]Output:[/blue]")
+            console.print(final_execution['output'])
+        if final_execution['errors']:
+            console.print("\n[red]Errors:[/red]")
+            console.print(final_execution['errors'])
+            
+        console.print("\n[bold blue]Final Evaluation:[/bold blue]")
+        console.print(Markdown(final_evaluation['feedback']))
+
     def _evaluate_code(self, code, goal, previous_feedback=None):
         """Evaluate how well the code meets the specified goal"""
         context_info = self.get_file_context(os.path.abspath('.'))

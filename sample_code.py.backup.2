@@ -1,0 +1,65 @@
+"""
+   Calculator class for basic arithmetic operations
+   This class provides functions to perform basic mathematical operations, such as addition, subtraction, multiplication, division, square root, and exponentiation. It also includes functionality for storing and retrieving values using keys in a dictionary (memory).
+   """
+
+   from typing import Any, Union
+   from functools import reduce
+   from decimal import Decimal
+
+   class Calculator:
+       def __init__(self):
+           self._memory = {}
+
+       def _validate_numbers(self, a: Union[float, int], b: Union[float, int]) -> None:
+           if not isinstance(a, (float, int)) or not isinstance(b, (float, int)):
+               raise ValueError("Both inputs must be numbers")
+
+       def divide(self, a: Union[float, int], b: Union[float, int]) -> Union[float, str]:
+           self._validate_numbers(a, b)
+           if isinstance(b, int) and b == 0:
+               raise ValueError("Cannot divide by zero")
+           if isinstance(a, Decimal):
+               a = float(a)
+           if isinstance(b, Decimal):
+               b = float(b)
+           return super().divide(a, b)
+
+       def add(self, *args: Union[float, int]) -> Union[float, str]:
+           result = reduce((lambda x, y: x + y), args, 0)
+           if any(map(lambda x: not isinstance(x, (float, int)), args)):
+               raise ValueError("Only numbers are allowed as operands")
+           return result
+
+       def subtract(self, *args: Union[float, int]) -> Union[float, str]:
+           result = self.add(*([-i for i in args]))
+           if any(map(lambda x: not isinstance(x, (float, int)), args)):
+               raise ValueError("Only numbers are allowed as operands")
+           return result
+
+       def multiply(self, *args: Union[float, int]) -> Union[float, str]:
+           if any(map(lambda x: not isinstance(x, (float, int)), args)):
+               raise ValueError("Only numbers are allowed as operands")
+           return reduce((lambda x, y: x * y), args, 1)
+
+       def square_root(self, number: Union[float, int]) -> Union[float, Decimal]:
+           if not isinstance(number, (float, int)):
+               raise ValueError("Input must be a float or an integer")
+           result = number ** 0.5 if number >= 0 else Decimal(-number ** 0.5)
+           return result
+
+       def power(self, base: Union[float, int], exponent: int) -> Union[float, str]:
+           if not isinstance(base, (float, int)):
+               raise ValueError("Base must be a float or an integer")
+           if exponent < 0:
+               raise ValueError("Exponent must be non-negative")
+           result = base ** exponent
+           return result
+
+       def store_and_recall(self, key: str, value: Union[float, int]) -> None:
+           self._memory[key] = value
+
+       def recall(self, key: str) -> Union[float, int]:
+           if key not in self._memory:
+               raise KeyError("No such memory key")
+           return self._memory[key]
