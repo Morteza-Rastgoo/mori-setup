@@ -17,6 +17,7 @@ Cursor AI is a code-aware IDE and AI programming assistant that:
 
 3. **Key Features**
    - Chat interface for code-related questions
+   - Edit code files in the directory you are working on including subdirectories
    - Code generation from natural language descriptions
    - Automated documentation generation
    - Code explanation and review capabilities
