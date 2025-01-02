@@ -32,6 +32,7 @@ class MoriAgent:
         self.test_results = {}
         self._available_models = set()  # Cache for available models
         self._model_pulling = False  # Flag to prevent multiple pull attempts
+        self.auto_mode = False  # Flag for autonomous mode
         
     def scan_project(self, start_path="."):
         """Scan the project directory and analyze file relationships"""
@@ -610,8 +611,9 @@ except Exception as e:
         except Exception:
             return {'goal_achieved': False, 'feedback': "Failed to parse evaluation"}
 
-    def achieve_goal(self, file_path, goal, max_iterations=None):
-        """Iteratively improve code until the specified goal is achieved"""
+    def auto_achieve_goal(self, file_path, goal, max_iterations=None):
+        """Automatically achieve a goal without user intervention"""
+        self.auto_mode = True
         if not os.path.exists(file_path):
             console.print(f"[red]Error: File {file_path} not found[/red]")
             return
@@ -626,7 +628,7 @@ except Exception as e:
             console.print(f"[red]Error reading file: {str(e)}[/red]")
             return
             
-        console.print("[green]Starting goal-based code generation...[/green]")
+        console.print("[green]Starting autonomous goal-based code generation...[/green]")
         console.print(f"[blue]Goal: {goal}[/blue]")
         
         current_code = original_code
@@ -680,25 +682,21 @@ Execution Results:
             console.print("\n[blue]Proposed Changes:[/blue]")
             console.print(Syntax(new_code, "python", theme="monokai"))
             
-            # Ask for confirmation
-            if Confirm.ask("\nApply these changes?"):
-                current_code = new_code
-                last_feedback = combined_feedback
+            # In auto mode, we automatically apply changes
+            current_code = new_code
+            last_feedback = combined_feedback
+            
+            # Create backup
+            backup_path = f"{file_path}.backup.{iteration}"
+            with open(backup_path, 'w') as f:
+                f.write(current_code)
                 
-                # Create backup
-                backup_path = f"{file_path}.backup.{iteration}"
-                with open(backup_path, 'w') as f:
-                    f.write(current_code)
-                    
-                # Apply changes
-                with open(file_path, 'w') as f:
-                    f.write(current_code)
-                    
-                console.print(f"[green]Changes applied. Backup saved to {backup_path}[/green]")
-            else:
-                if not Confirm.ask("Continue to next iteration?"):
-                    break
-                    
+            # Apply changes
+            with open(file_path, 'w') as f:
+                f.write(current_code)
+                
+            console.print(f"[green]Changes applied automatically. Backup saved to {backup_path}[/green]")
+            
             iteration += 1
             
         if iteration > self.max_iterations:
@@ -718,7 +716,9 @@ Execution Results:
             
         console.print("\n[bold blue]Final Evaluation:[/bold blue]")
         console.print(Markdown(final_evaluation['feedback']))
-
+        
+        self.auto_mode = False  # Reset auto mode
+        
     def _evaluate_code(self, code, goal, previous_feedback=None):
         """Evaluate how well the code meets the specified goal"""
         context_info = self.get_file_context(os.path.abspath('.'))
@@ -771,27 +771,55 @@ Execution Results:
         """Generate improved code based on feedback"""
         context_info = self.get_file_context(os.path.abspath('.'))
         
-        prompt = f"""Improve this code to better meet the specified goal:
+        # Enhanced prompt for autonomous mode
+        if self.auto_mode:
+            prompt = f"""As an autonomous coding agent, improve this code to meet the specified goal:
 
-        GOAL: {goal}
+            GOAL: {goal}
 
-        CURRENT CODE:
-        ```python
-        {code}
-        ```
-        
-        PROJECT CONTEXT:
-        {context_info if context_info else "No additional context available"}
-        
-        CURRENT STATUS:
-        {feedback}
+            CURRENT CODE:
+            ```python
+            {code}
+            ```
+            
+            PROJECT CONTEXT:
+            {context_info if context_info else "No additional context available"}
+            
+            CURRENT STATUS:
+            {feedback}
 
-        Please provide improved code that better meets the goal.
-        Keep existing functionality intact while making necessary improvements.
-        Maintain code style and documentation standards.
-        
-        Return ONLY the complete improved code without any additional text.
-        """
+            REQUIREMENTS:
+            1. Make incremental, safe improvements
+            2. Ensure all changes are backward compatible
+            3. Maintain existing functionality while adding new features
+            4. Follow best practices and coding standards
+            5. Include proper error handling
+            6. Add comprehensive documentation
+            
+            Return ONLY the complete improved code without any additional text.
+            """
+        else:
+            prompt = f"""Improve this code to better meet the specified goal:
+
+            GOAL: {goal}
+
+            CURRENT CODE:
+            ```python
+            {code}
+            ```
+            
+            PROJECT CONTEXT:
+            {context_info if context_info else "No additional context available"}
+            
+            CURRENT STATUS:
+            {feedback}
+
+            Please provide improved code that better meets the goal.
+            Keep existing functionality intact while making necessary improvements.
+            Maintain code style and documentation standards.
+            
+            Return ONLY the complete improved code without any additional text.
+            """
         
         response = self.generate_response(prompt)
         if not response:
@@ -875,10 +903,10 @@ def edit(file_path, instruction):
 @click.argument('file_path', type=click.Path(exists=True))
 @click.argument('goal')
 @click.option('--max-iterations', '-m', type=int, help='Maximum number of improvement iterations')
-def achieve(file_path, goal, max_iterations):
-    """Iteratively improve code to achieve a specific goal"""
+def auto(file_path, goal, max_iterations):
+    """Automatically achieve a goal without user intervention"""
     agent = MoriAgent()
-    agent.achieve_goal(file_path, goal, max_iterations)
+    agent.auto_achieve_goal(file_path, goal, max_iterations)
 
 if __name__ == '__main__':
     try:

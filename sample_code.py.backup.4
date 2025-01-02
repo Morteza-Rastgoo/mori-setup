@@ -1,61 +1,59 @@
-from typing import Any, Union
+import math
 
-class Calculator:
-    def __init__(self):
-        self._memory = {}
+   class Calculator:
+       def __init__(self):
+           self._memory = {}
 
-    def _validate_numbers(self, a: Union[float, int], b: Union[float, int]) -> None:
-        """Validate that both inputs are numbers."""
-        if not isinstance(a, (float, int)) or not isinstance(b, (float, int)):
-            raise ValueError("Both inputs must be numbers")
+       def add(self, *numbers):
+           return sum(numbers)
 
-    def _validate_operands(self, operands: tuple) -> None:
-        """Validate that all operands are numbers."""
-        for operand in operands:
-            if not isinstance(operand, (float, int)):
-                raise TypeError("Only numbers are allowed as operands")
+       def subtract(self, *args):
+           if len(args) != 2:
+               raise ValueError("Subtraction requires exactly two numbers.")
+           return args[0] - args[1]
 
-    def divide(self, a: Union[float, int], b: Union[float, int]) -> Union[float, str]:
-        """Divide two numbers. Raise ValueError if dividing by zero."""
-        self._validate_numbers(a, b)
-        if isinstance(b, int) and b == 0:
-            raise ValueError("Cannot divide by zero")
-        return super().divide(a, b)
+       def multiply(self, *args):
+           return math.prod(args)
 
-    def add(self, *args: Union[float, int]) -> Union[float, str]:
-        """Add multiple numbers. Return the result."""
-        self._validate_operands((args))
-        return reduce((lambda x, y: x + y), args, 0)
+       def divide(self, dividend, divisor):
+           if divisor == 0:
+               raise ValueError("Cannot divide by zero.")
+           return dividend / divisor
 
-    def subtract(self, *args: Union[float, int]) -> Union[float, str]:
-        """Subtract multiple numbers. Return the result."""
-        self._validate_operands((args))
-        return self.add(*([-i for i in args]))
+       def square_root(self, number):
+           if number < 0:
+               raise ValueError("Square root of negative numbers is undefined.")
+           return math.sqrt(number)
 
-    def multiply(self, *args: Union[float, int]) -> Union[float, str]:
-        """Multiply multiple numbers. Return the result."""
-        self._validate_operands((args))
-        return reduce((lambda x, y: x * y), args, 1)
+       def power(self, base, exponent):
+           if base == 0 and exponent <= 0:
+               raise ValueError("Base cannot be zero for exponentiation.")
+           return base ** exponent
 
-    def square_root(self, number: Union[float, int]) -> Union[float, Decimal]:
-        """Compute the square root of a number."""
-        if not isinstance(number, (float, int)):
-            raise ValueError("Input must be a float or an integer")
-        return number ** 0.5 if number >= 0 else Decimal(-number ** 0.5)
+       def store_and_recall(self, key, value):
+           self._memory[key] = value
 
-    def power(self, base: Union[float, int], exponent: int) -> Union[float, str]:
-        """Raise the base to the given exponent."""
-        self._validate_numbers(base, exponent)
-        if exponent < 0:
-            raise ValueError("Exponent must be non-negative")
-        return base ** exponent
+       def recall(self, key):
+           if key not in self._memory:
+               raise KeyError("No such memory key.")
+           return self._memory[key]
 
-    def store_and_recall(self, key: str, value: Union[float, int]) -> None:
-        """Store a number with the given key and return None."""
-        self._memory[key] = value
+   if __name__ == "__main__":
+       calc = Calculator()
 
-    def recall(self, key: str) -> Union[float, int]:
-        """Retrieve the number associated with the given key."""
-        if key not in self._memory:
-            raise KeyError("No such memory key")
-        return self._memory[key]
+       # Test basic operations
+       print("Basic operations:")
+       print(f"2 + 3 = {calc.add(2, 3)}")
+       print(f"5 - 2 = {calc.subtract(5, 2)}")
+       print(f"4 * 3 = {calc.multiply(4, 3)}")
+       print(f"10 / 2 = {calc.divide(10, 2)}")
+
+       # Test advanced operations
+       print("\nAdvanced operations:")
+       print(f"Square root of 16 = {calc.square_root(16)}")
+       print(f"2 to the power of 3 = {calc.power(2, 3)}")
+
+       # Test memory functions
+       print("\nMemory functions:")
+       calc.store_and_recall("result", 42)
+       print(f"Stored value: {calc.recall('result')}")

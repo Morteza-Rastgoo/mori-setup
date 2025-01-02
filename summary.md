@@ -21,6 +21,7 @@ Cursor AI is a code-aware IDE and AI programming assistant that:
    - Content aware code generation understanding other files in the project and the context of the code
    - Get a goal from the user and generate itterative code to achieve the goal until the goal is satisfied
    - Run the code and analyze the output and fix the code until the goal is satisfied
+   - Have Agent Mode to find out the best way to achieve the goal automatically based on the context of the project and the code without user intervention until the goal is satisfied.
    - Code generation from natural language descriptions
    - Automated documentation generation
    - Code explanation and review capabilities
