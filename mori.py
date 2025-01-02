@@ -36,6 +36,9 @@ class MoriAgent:
         self.model = os.getenv('OLLAMA_MODEL', 'mistral')
         self.ollama_remote = os.getenv('OLLAMA_REMOTE', 'false').lower() == 'true'
         
+        # Get agent settings
+        self.max_iterations = int(os.getenv('DEFAULT_ITERATIONS', '25'))
+        
         # Initialize SSH tunnel if using remote Ollama
         self.tunnel_process = None
         if self.ollama_remote:
@@ -48,7 +51,6 @@ class MoriAgent:
         self.context = []
         self.project_files = {}
         self.file_relationships = {}
-        self.max_iterations = 5
         self.test_results = {}
         self._available_models = set()
         self._model_pulling = False
@@ -984,9 +986,15 @@ def edit(file_path, instruction):
 @cli.command()
 @click.argument('file_path', type=click.Path(exists=True))
 @click.argument('goal')
-@click.option('--max-iterations', '-m', type=int, help='Maximum number of improvement iterations')
+@click.option('--max-iterations', '-m', type=int, 
+              help='Maximum number of improvement iterations (default from DEFAULT_ITERATIONS in .env)')
 def auto(file_path, goal, max_iterations):
-    """Automatically achieve a goal without user intervention"""
+    """Automatically achieve a goal without user intervention.
+    
+    The agent will iteratively improve the code until the goal is achieved or the maximum number
+    of iterations is reached. The default number of iterations can be set in the .env file using
+    the DEFAULT_ITERATIONS variable (defaults to 25 if not set).
+    """
     agent = MoriAgent()
     agent.auto_achieve_goal(file_path, goal, max_iterations)
 
