@@ -28,8 +28,10 @@ class MoriAgent:
         self.context = []
         self.project_files = {}
         self.file_relationships = {}
-        self.max_iterations = 5  # Maximum number of improvement iterations
-        self.test_results = {}  # Store test results
+        self.max_iterations = 5
+        self.test_results = {}
+        self._available_models = set()  # Cache for available models
+        self._model_pulling = False  # Flag to prevent multiple pull attempts
         
     def scan_project(self, start_path="."):
         """Scan the project directory and analyze file relationships"""
@@ -333,20 +335,46 @@ class MoriAgent:
             
     def ensure_model_available(self):
         """Ensure the selected model is available"""
+        if self.model in self._available_models:
+            return True
+            
         try:
+            # Check if model is already downloaded
             response = requests.get(f"{self.base_url}/api/tags")
             if response.status_code == 200:
                 models = response.json().get("models", [])
-                available_models = [m["name"] for m in models]
-                if self.model not in available_models:
+                self._available_models = {m["name"] for m in models}
+                
+                if self.model not in self._available_models and not self._model_pulling:
+                    self._model_pulling = True
                     console.print(f"[yellow]Model {self.model} not found. Pulling it now...[/yellow]")
-                    pull_response = requests.post(f"{self.base_url}/api/pull", json={"name": self.model})
-                    if pull_response.status_code != 200:
-                        console.print(f"[red]Failed to pull model {self.model}[/red]")
-                        return False
-                return True
+                    
+                    # Pull the model
+                    with Progress() as progress:
+                        task = progress.add_task(f"[cyan]Pulling {self.model}...", total=None)
+                        pull_response = requests.post(f"{self.base_url}/api/pull", 
+                                                   json={"name": self.model},
+                                                   stream=True)
+                        
+                        if pull_response.status_code == 200:
+                            for line in pull_response.iter_lines():
+                                if line:
+                                    progress.update(task, advance=1)
+                            
+                            self._available_models.add(self.model)
+                            console.print(f"[green]Successfully pulled {self.model}[/green]")
+                            self._model_pulling = False
+                            return True
+                        else:
+                            console.print(f"[red]Failed to pull model {self.model}[/red]")
+                            self._model_pulling = False
+                            return False
+                
+                return self.model in self._available_models
+                
         except requests.exceptions.RequestException as e:
             console.print(f"[red]Error checking models: {str(e)}[/red]")
+            self._model_pulling = False
             return False
             
     def generate_response(self, prompt, system_prompt=None):

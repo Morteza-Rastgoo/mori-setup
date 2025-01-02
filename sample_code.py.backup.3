@@ -1,61 +1,55 @@
-"""
-   Calculator class for basic arithmetic operations
-   This class provides functions to perform basic mathematical operations, such as addition, subtraction, multiplication, division, square root, and exponentiation. It also includes functionality for storing and retrieving values using keys in a dictionary (memory).
-   """
+import math
 
-   from typing import Any, Union
-   from functools import reduce
-   from decimal import Decimal
+    class Calculator:
+        def __init__(self):
+            pass
 
-   class Calculator:
-       def __init__(self):
-           self._memory = {}
+        def add(self, *numbers):
+            return sum(numbers)
 
-       def _validate_numbers(self, a: Union[float, int], b: Union[float, int]) -> None:
-           if not isinstance(a, (float, int)) or not isinstance(b, (float, int)):
-               raise ValueError("Both inputs must be numbers")
+        def subtract(self, *args):
+            return self.add([x for x in args if isinstance(x, (int, float))]) - self.add([y for y in args if not isinstance(y, (int, float))])
 
-       def _validate_operands(self, operands: tuple) -> None:
-           for operand in operands:
-               if not isinstance(operand, (float, int)):
-                   raise TypeError("Only numbers are allowed as operands")
+        def multiply(self, *args):
+            return math.copysign(1, args[0]) * self.add([x*y for x, y in zip(args, reversed(args))])
 
-       def divide(self, a: Union[float, int], b: Union[float, int]) -> Union[float, str]:
-           self._validate_numbers(a, b)
-           if isinstance(b, int) and b == 0:
-               raise ValueError("Cannot divide by zero")
-           return super().divide(a, b)
+        def divide(self, dividend, divisor):
+            if divisor == 0:
+                raise ValueError("Cannot divide by zero")
+            return dividend / divisor
 
-       def add(self, *args: Union[float, int]) -> Union[float, str]:
-           self._validate_operands((args))
-           result = reduce((lambda x, y: x + y), args, 0)
-           return result
+        def square_root(self, number):
+            if number < 0:
+                raise ValueError("Square root of negative numbers is not defined.")
+            return math.sqrt(number)
 
-       def subtract(self, *args: Union[float, int]) -> Union[float, str]:
-           self._validate_operands((args))
-           result = self.add(*([-i for i in args]))
-           return result
+        def power(self, base, exponent):
+            return base ** exponent
 
-       def multiply(self, *args: Union[float, int]) -> Union[float, str]:
-           self._validate_operands((args))
-           return reduce((lambda x, y: x * y), args, 1)
+        def store_and_recall(self, key, value):
+            self._memory[key] = value
 
-       def square_root(self, number: Union[float, int]) -> Union[float, Decimal]:
-           if not isinstance(number, (float, int)):
-               raise ValueError("Input must be a float or an integer")
-           result = number ** 0.5 if number >= 0 else Decimal(-number ** 0.5)
-           return result
+        def recall(self, key):
+            if key not in self._memory:
+                raise KeyError("No such memory key")
+            return self._memory[key]
 
-       def power(self, base: Union[float, int], exponent: int) -> Union[float, str]:
-           self._validate_numbers(base, exponent)
-           if exponent < 0:
-               raise ValueError("Exponent must be non-negative")
-           return base ** exponent
+    if __name__ == "__main__":
+        calc = Calculator()
 
-       def store_and_recall(self, key: str, value: Union[float, int]) -> None:
-           self._memory[key] = value
+        # Test basic operations
+        print("Basic operations:")
+        print(f"2 + 3 = {calc.add(2, 3)}")
+        print(f"5 - 2 = {calc.subtract(5, 2)}")
+        print(f"4 * 3 = {calc.multiply(4, 3)}")
+        print(f"10 / 2 = {calc.divide(10, 2)}")
 
-       def recall(self, key: str) -> Union[float, int]:
-           if key not in self._memory:
-               raise KeyError("No such memory key")
-           return self._memory[key]
+        # Test advanced operations
+        print("\nAdvanced operations:")
+        print(f"Square root of 16 = {calc.square_root(16)}")
+        print(f"2 to the power of 3 = {calc.power(2, 3)}")
+
+        # Test memory functions
+        print("\nMemory functions:")
+        calc.store_and_recall("result", 42)
+        print(f"Stored value: {calc.recall('result')}")
