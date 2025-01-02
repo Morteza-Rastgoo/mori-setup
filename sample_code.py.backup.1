@@ -1,66 +1,123 @@
+import unittest
+from math import sqrt
+
 class Calculator:
-        def __init__(self):
-            pass
+    def __init__(self):
+        pass
 
-        def add(self, *numbers):
-            return sum(numbers)
+    def add(self, a, b):
+        return a + b
 
-        def subtract(self, num1, num2=0):
-            try:
-                result = num1 - num2
-                print(f"{num1} - {num2} = {result}")
-            except ValueError as e:
-                print("Error:", e)
+    def subtract(self, a, b):
+        return a - b
 
-        def multiply(self, *numbers):
-            return math.prod(numbers)
+    def multiply(self, a, b):
+        return a * b
 
-        def divide(self, dividend, divisor):
-            if divisor == 0:
-                raise ValueError("Cannot divide by zero.")
-            return dividend / divisor
+    def divide(self, a, b):
+        if b == 0:
+            raise ValueError("Division by zero is not allowed.")
+        return a / b
 
-        def square_root(self, number):
-            if number < 0:
-                raise ValueError("Square root of negative numbers is undefined.")
-            return math.sqrt(number)
+    def complex_addition(self, a, b):
+        real_a = a[0]
+        imag_a = a[1]
+        real_b = b[0]
+        imag_b = b[1]
+        return (real_a + real_b, imag_a + imag_b)
 
-        def power(self, base, exponent):
-            if base == 0 and exponent <= 0:
-                raise ValueError("Base cannot be zero for exponentiation.")
-            return base ** exponent
+    def square_root(self, number):
+        if number < 0:
+            raise ValueError("Negative numbers do not have real square roots.")
+        return sqrt(number)
 
-        def store_and_recall(self, key, value):
-            self._memory[key] = value
+    def power(self, base, exponent):
+        result = base
+        for _ in range(1, exponent):
+            result *= base
+        return result
 
-        def recall(self, key):
-            if key not in self._memory:
-                raise KeyError("No such memory key.")
-            return self._memory[key]
+    def store_and_recall(self, key, value):
+        self.memory[key] = value
 
-    if __name__ == "__main__":
-        calc = Calculator()
+    def recall(self, key):
+        if key not in self.memory:
+            raise KeyError("The specified memory key does not exist.")
+        return self.memory[key]
 
-        # Test basic operations
-        print("Basic operations:")
-        result = calc.add(2, 3)
-        print(f"2 + 3 = {result}")
-        result = calc.subtract(5, 2)
-        print(f"5 - 2 = {result}")
-        result = calc.multiply(4, 3)
-        print(f"4 * 3 = {result}")
-        result = calc.divide(10, 2)
-        print(f"10 / 2 = {result}")
+    def clear_memory(self):
+        self.memory.clear()
 
-        # Test advanced operations
-        print("\nAdvanced operations:")
-        result = calc.square_root(16)
-        print(f"Square root of 16 = {result}")
-        result = calc.power(2, 3)
-        print(f"2 to the power of 3 = {result}")
+    def __str__(self):
+        return "Calculator"
 
-        # Test memory functions
-        print("\nMemory functions:")
-        calc._memory = {"key": 42}
-        stored_value = calc.recall("key")
-        print(f"Stored value: {stored_value}")
+    @property
+    def memory(self):
+        return self.__dict__.get("memory", {})
+
+if __name__ == "__main__":
+    calc = Calculator()
+
+    print("\nBasic operations:")
+    print(f"2 + 3 = {calc.add(2, 3)}")
+    print(f"5 - 2 = {calc.subtract(5, 2)}")
+    print(f"4 * 3 = {calc.multiply(4, 3)}")
+    print(f"10 / 2 = {calc.divide(10, 2)}")
+
+    print("\nComplex number operations:")
+    complex_num1 = (1, 2)
+    complex_num2 = (3, 4)
+    print(f"({complex_num1[0]}+{complex_num1[1]}j) + ({complex_num2[0]}+{complex_num2[1]}j) = {calc.complex_addition(complex_num1, complex_num2)}")
+    print(f"sqrt(-1) = {calc.square_root(-1)}")
+
+    print("\nMemory functions:")
+    calc.store_and_recall("result", 42)
+    print(f"Stored value: {calc.recall('result')}")
+    calc.clear_memory()
+
+class TestCalculator(unittest.TestCase):
+    def setUp(self):
+        self.calculator = Calculator()
+
+    def test_addition(self):
+        result = self.calculator.add(2, 3)
+        self.assertEqual(result, 5)
+
+    def test_subtraction(self):
+        result = self.calculator.subtract(5, 2)
+        self.assertEqual(result, 3)
+
+    def test_multiplication(self):
+        result = self.calculator.multiply(4, 3)
+        self.assertEqual(result, 12)
+
+    def test_division(self):
+        with self.assertRaises(ValueError):
+            self.calculator.divide(0, 2)
+        result = self.calculator.divide(10, 2)
+        self.assertEqual(result, 5)
+
+    def test_complex_addition(self):
+        complex_num1 = (1, 2)
+        complex_num2 = (3, 4)
+        result = self.calculator.complex_addition(complex_num1, complex_num2)
+        expected = (4, 6)
+        self.assertEqual(result, expected)
+
+    def test_square_root(self):
+        result = self.calculator.square_root(9)
+        self.assertEqual(result, 3)
+        with self.assertRaises(ValueError):
+            self.calculator.square_root(-1)
+
+    def test_power(self):
+        result = self.calculator.power(2, 4)
+        self.assertEqual(result, 16)
+
+    def test_store_and_recall(self):
+        self.calculator.store_and_recall("test", 42)
+        result = self.calculator.recall("test")
+        self.assertEqual(result, 42)
+
+if __name__ == "__main__":
+    unittest.main()

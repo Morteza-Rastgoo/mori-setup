@@ -16,24 +16,104 @@ import subprocess
 import time
 import tempfile
 import glob
+from dotenv import load_dotenv
 
 console = Console()
 
 class MoriAgent:
-    def __init__(self, host="localhost", port=11434, model="mistral"):
-        self.host = host
-        self.port = port
-        self.model = model
-        self.base_url = f"http://{host}:{port}"
+    def __init__(self):
+        # Load environment variables
+        load_dotenv()
+        
+        # Get remote settings
+        self.remote_host = os.getenv('REMOTE_HOST')
+        self.remote_user = os.getenv('REMOTE_USER')
+        self.remote_port = int(os.getenv('REMOTE_PORT', '22'))
+        
+        # Get Ollama settings
+        self.ollama_host = os.getenv('OLLAMA_HOST', 'localhost')
+        self.ollama_port = int(os.getenv('OLLAMA_PORT', '11434'))
+        self.model = os.getenv('OLLAMA_MODEL', 'mistral')
+        self.ollama_remote = os.getenv('OLLAMA_REMOTE', 'false').lower() == 'true'
+        
+        # Initialize SSH tunnel if using remote Ollama
+        self.tunnel_process = None
+        if self.ollama_remote:
+            self._setup_ssh_tunnel()
+        
+        # Initialize base URL (always use localhost with SSH tunnel)
+        self.base_url = f"http://localhost:{self.ollama_port}"
+        
+        # Other initializations
         self.context = []
         self.project_files = {}
         self.file_relationships = {}
         self.max_iterations = 5
         self.test_results = {}
-        self._available_models = set()  # Cache for available models
-        self._model_pulling = False  # Flag to prevent multiple pull attempts
-        self.auto_mode = False  # Flag for autonomous mode
+        self._available_models = set()
+        self._model_pulling = False
+        self.auto_mode = False
         
+    def _setup_ssh_tunnel(self):
+        """Set up SSH tunnel to remote Ollama server"""
+        try:
+            # Kill any existing processes using the port
+            self._cleanup_port(self.ollama_port)
+            
+            # Create SSH tunnel
+            ssh_cmd = [
+                'ssh',
+                '-N',  # Don't execute remote command
+                '-L', f'{self.ollama_port}:localhost:{self.ollama_port}',  # Port forwarding
+                '-p', str(self.remote_port),
+                f'{self.remote_user}@{self.remote_host}'
+            ]
+            
+            console.print("[green]Setting up SSH tunnel to remote Ollama server...[/green]")
+            self.tunnel_process = subprocess.Popen(
+                ssh_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            # Wait for tunnel to be established
+            time.sleep(2)
+            if self.tunnel_process.poll() is not None:
+                _, stderr = self.tunnel_process.communicate()
+                raise Exception(f"Failed to establish SSH tunnel: {stderr.decode()}")
+                
+            console.print("[green]SSH tunnel established successfully[/green]")
+            
+        except Exception as e:
+            console.print(f"[red]Error setting up SSH tunnel: {str(e)}[/red]")
+            if self.tunnel_process:
+                self.tunnel_process.kill()
+            raise
+            
+    def _cleanup_port(self, port):
+        """Kill any processes using the specified port"""
+        try:
+            # Find processes using the port
+            cmd = f"lsof -ti:{port}"
+            result = subprocess.run(cmd.split(), capture_output=True, text=True)
+            
+            if result.stdout:
+                # Kill the processes
+                pids = result.stdout.strip().split('\n')
+                for pid in pids:
+                    try:
+                        subprocess.run(['kill', '-9', pid])
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+            
+    def __del__(self):
+        """Cleanup when the object is destroyed"""
+        if self.tunnel_process:
+            self.tunnel_process.kill()
+            self._cleanup_port(self.ollama_port)
+            
     def scan_project(self, start_path="."):
         """Scan the project directory and analyze file relationships"""
         console.print("[green]Scanning project structure...[/green]")
@@ -329,6 +409,9 @@ class MoriAgent:
     def check_ollama_connection(self):
         """Check if Ollama is running and accessible"""
         try:
+            if self.ollama_remote and not self.tunnel_process:
+                self._setup_ssh_tunnel()
+                
             response = requests.get(f"{self.base_url}/api/version", timeout=5)
             return response.status_code == 200
         except requests.exceptions.RequestException:
@@ -865,10 +948,9 @@ def explain(file_path):
 
 @cli.command()
 @click.argument('prompt')
-@click.option('--model', default='codellama', help='Model to use for generation')
-def ask(prompt, model):
+def ask(prompt):
     """Ask a coding-related question"""
-    agent = MoriAgent(model=model)
+    agent = MoriAgent()
     console.print("[green]Thinking...[/green]")
     response = agent.generate_response(prompt)
     if response:
