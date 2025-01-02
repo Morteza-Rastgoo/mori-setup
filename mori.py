@@ -8,10 +8,12 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.syntax import Syntax
 from rich.panel import Panel
+from rich.prompt import Prompt, Confirm
 import requests
 from pathlib import Path
 import subprocess
 import time
+import tempfile
 
 console = Console()
 
@@ -191,6 +193,98 @@ class MoriAgent:
         if response:
             console.print(Markdown(response))
 
+    def edit_file(self, file_path, instruction):
+        """Edit a file based on user instruction"""
+        if not os.path.exists(file_path):
+            console.print(f"[red]Error: File {file_path} not found[/red]")
+            return
+            
+        try:
+            with open(file_path, 'r') as f:
+                original_code = f.read()
+        except Exception as e:
+            console.print(f"[red]Error reading file: {str(e)}[/red]")
+            return
+            
+        console.print("[green]Analyzing your request...[/green]")
+        
+        # Create the prompt for code modification
+        prompt = f"""I want you to modify this code according to the following instruction:
+        
+        INSTRUCTION: {instruction}
+        
+        CURRENT CODE:
+        ```python
+        {original_code}
+        ```
+        
+        Please provide:
+        1. A clear explanation of the changes you'll make
+        2. The complete modified code
+        3. Any potential risks or considerations
+        
+        Format your response as follows:
+        ---EXPLANATION---
+        (Your explanation here)
+        
+        ---CODE---
+        (The complete modified code)
+        
+        ---NOTES---
+        (Any additional notes, risks, or considerations)
+        """
+        
+        response = self.generate_response(prompt)
+        if not response:
+            return
+            
+        # Parse the response
+        try:
+            explanation = response.split("---EXPLANATION---")[1].split("---CODE---")[0].strip()
+            new_code = response.split("---CODE---")[1].split("---NOTES---")[0].strip()
+            notes = response.split("---NOTES---")[1].strip()
+        except IndexError:
+            console.print("[red]Error: Couldn't parse the AI response properly[/red]")
+            return
+            
+        # Show the changes
+        console.print("\n[bold blue]Proposed Changes:[/bold blue]")
+        console.print(Markdown(explanation))
+        
+        console.print("\n[bold blue]Modified Code:[/bold blue]")
+        console.print(Syntax(new_code, "python", theme="monokai"))
+        
+        if notes:
+            console.print("\n[bold blue]Additional Notes:[/bold blue]")
+            console.print(Markdown(notes))
+        
+        # Ask for confirmation
+        if Confirm.ask("\nDo you want to apply these changes?"):
+            try:
+                # Create a backup
+                backup_path = f"{file_path}.backup"
+                with open(backup_path, 'w') as f:
+                    f.write(original_code)
+                    
+                # Write the new code
+                with open(file_path, 'w') as f:
+                    f.write(new_code)
+                    
+                console.print(f"[green]Changes applied successfully! Backup saved to {backup_path}[/green]")
+            except Exception as e:
+                console.print(f"[red]Error applying changes: {str(e)}[/red]")
+                console.print("[yellow]Attempting to restore from backup...[/yellow]")
+                try:
+                    with open(backup_path, 'r') as f:
+                        original_code = f.read()
+                    with open(file_path, 'w') as f:
+                        f.write(original_code)
+                    console.print("[green]Successfully restored from backup[/green]")
+                except Exception as restore_error:
+                    console.print(f"[red]Error restoring from backup: {str(restore_error)}[/red]")
+        else:
+            console.print("[yellow]Changes cancelled[/yellow]")
+
 @click.group()
 def cli():
     """MoriCodingAgent - Your AI coding assistant"""
@@ -243,6 +337,15 @@ def models():
             console.print("[red]Error: Failed to fetch models[/red]")
     except requests.exceptions.RequestException:
         console.print("[red]Error: Cannot connect to Ollama[/red]")
+
+@cli.command()
+@click.argument('file_path', type=click.Path(exists=True))
+@click.option('--instruction', '-i', prompt='What changes would you like to make?',
+              help='Instruction for modifying the code')
+def edit(file_path, instruction):
+    """Edit a file based on your instructions"""
+    agent = MoriAgent()
+    agent.edit_file(file_path, instruction)
 
 if __name__ == '__main__':
     try:
