@@ -28,6 +28,7 @@ class MoriAgent:
         self.context = []
         self.project_files = {}
         self.file_relationships = {}
+        self.max_iterations = 5  # Maximum number of improvement iterations
         
     def scan_project(self, start_path="."):
         """Scan the project directory and analyze file relationships"""
@@ -444,6 +445,172 @@ class MoriAgent:
         if response:
             console.print(Markdown(response))
 
+    def achieve_goal(self, file_path, goal, max_iterations=None):
+        """Iteratively improve code until the specified goal is achieved"""
+        if not os.path.exists(file_path):
+            console.print(f"[red]Error: File {file_path} not found[/red]")
+            return
+            
+        if max_iterations is not None:
+            self.max_iterations = max_iterations
+            
+        try:
+            with open(file_path, 'r') as f:
+                original_code = f.read()
+        except Exception as e:
+            console.print(f"[red]Error reading file: {str(e)}[/red]")
+            return
+            
+        console.print("[green]Starting goal-based code generation...[/green]")
+        console.print(f"[blue]Goal: {goal}[/blue]")
+        
+        current_code = original_code
+        iteration = 1
+        last_feedback = None
+        
+        while iteration <= self.max_iterations:
+            console.print(f"\n[cyan]Iteration {iteration}/{self.max_iterations}[/cyan]")
+            
+            # Evaluate current code against goal
+            evaluation = self._evaluate_code(current_code, goal, last_feedback)
+            
+            if evaluation['goal_achieved']:
+                console.print("[green]✓ Goal achieved![/green]")
+                break
+                
+            # Show current status
+            console.print("\n[yellow]Current Status:[/yellow]")
+            console.print(Markdown(evaluation['feedback']))
+            
+            # Generate improvements
+            new_code = self._improve_code(current_code, goal, evaluation['feedback'])
+            if not new_code:
+                console.print("[red]Failed to generate improvements[/red]")
+                break
+                
+            # Show proposed changes
+            console.print("\n[blue]Proposed Changes:[/blue]")
+            console.print(Syntax(new_code, "python", theme="monokai"))
+            
+            # Ask for confirmation
+            if Confirm.ask("\nApply these changes?"):
+                current_code = new_code
+                last_feedback = evaluation['feedback']
+                
+                # Create backup
+                backup_path = f"{file_path}.backup.{iteration}"
+                with open(backup_path, 'w') as f:
+                    f.write(current_code)
+                    
+                # Apply changes
+                with open(file_path, 'w') as f:
+                    f.write(current_code)
+                    
+                console.print(f"[green]Changes applied. Backup saved to {backup_path}[/green]")
+            else:
+                if not Confirm.ask("Continue to next iteration?"):
+                    break
+                    
+            iteration += 1
+            
+        if iteration > self.max_iterations:
+            console.print("[yellow]Maximum iterations reached[/yellow]")
+            
+        # Final evaluation
+        final_evaluation = self._evaluate_code(current_code, goal, last_feedback)
+        console.print("\n[bold blue]Final Status:[/bold blue]")
+        console.print(Markdown(final_evaluation['feedback']))
+        
+    def _evaluate_code(self, code, goal, previous_feedback=None):
+        """Evaluate how well the code meets the specified goal"""
+        context_info = self.get_file_context(os.path.abspath('.'))
+        
+        prompt = f"""Evaluate how well this code meets the specified goal:
+
+        GOAL: {goal}
+
+        CODE:
+        ```python
+        {code}
+        ```
+        
+        PROJECT CONTEXT:
+        {context_info if context_info else "No additional context available"}
+        
+        PREVIOUS FEEDBACK:
+        {previous_feedback if previous_feedback else "No previous feedback"}
+
+        Please provide:
+        1. Whether the goal has been achieved (Yes/No)
+        2. Detailed feedback on current status
+        3. Specific areas that need improvement
+        4. Any potential issues or concerns
+
+        Format your response as follows:
+        ---ACHIEVED---
+        (Yes/No)
+
+        ---FEEDBACK---
+        (Your detailed feedback here)
+        """
+        
+        response = self.generate_response(prompt)
+        if not response:
+            return {'goal_achieved': False, 'feedback': "Failed to evaluate code"}
+            
+        try:
+            achieved = response.split("---ACHIEVED---")[1].split("---FEEDBACK---")[0].strip().lower()
+            feedback = response.split("---FEEDBACK---")[1].strip()
+            
+            return {
+                'goal_achieved': achieved == 'yes',
+                'feedback': feedback
+            }
+        except Exception:
+            return {'goal_achieved': False, 'feedback': "Failed to parse evaluation"}
+            
+    def _improve_code(self, code, goal, feedback):
+        """Generate improved code based on feedback"""
+        context_info = self.get_file_context(os.path.abspath('.'))
+        
+        prompt = f"""Improve this code to better meet the specified goal:
+
+        GOAL: {goal}
+
+        CURRENT CODE:
+        ```python
+        {code}
+        ```
+        
+        PROJECT CONTEXT:
+        {context_info if context_info else "No additional context available"}
+        
+        CURRENT STATUS:
+        {feedback}
+
+        Please provide improved code that better meets the goal.
+        Keep existing functionality intact while making necessary improvements.
+        Maintain code style and documentation standards.
+        
+        Return ONLY the complete improved code without any additional text.
+        """
+        
+        response = self.generate_response(prompt)
+        if not response:
+            return None
+            
+        # Clean up the response to extract only the code
+        try:
+            if "```python" in response:
+                code = response.split("```python")[1].split("```")[0].strip()
+            elif "```" in response:
+                code = response.split("```")[1].split("```")[0].strip()
+            else:
+                code = response.strip()
+            return code
+        except Exception:
+            return None
+
 @click.group()
 def cli():
     """MoriCodingAgent - Your AI coding assistant"""
@@ -505,6 +672,15 @@ def edit(file_path, instruction):
     """Edit a file based on your instructions"""
     agent = MoriAgent()
     agent.edit_file(file_path, instruction)
+
+@cli.command()
+@click.argument('file_path', type=click.Path(exists=True))
+@click.argument('goal')
+@click.option('--max-iterations', '-m', type=int, help='Maximum number of improvement iterations')
+def achieve(file_path, goal, max_iterations):
+    """Iteratively improve code to achieve a specific goal"""
+    agent = MoriAgent()
+    agent.achieve_goal(file_path, goal, max_iterations)
 
 if __name__ == '__main__':
     try:
