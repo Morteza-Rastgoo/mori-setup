@@ -1,292 +1,217 @@
 #!/bin/bash
 
-# Load environment variables from .env file
-load_env() {
-    if [ -f .env ]; then
-        set -a
-        source .env
-        set +a
+echo "Setting up MoriCodingAgent..."
+
+# Create config directory
+mkdir -p ~/.mori
+
+# Function to check if command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Check Python version
+echo "Checking Python version..."
+if ! command_exists python3; then
+    echo "Error: Python 3 is required but not installed"
+    exit 1
+fi
+
+# Install required packages
+echo "Installing required packages..."
+python3 -m pip install -r requirements.txt
+
+# Function to get CPU info
+get_cpu_info() {
+    local CPU_SCORE=0
+    local CPU_CORES=0
+    local CPU_MODEL=""
+    local CPU_SPEED=0
+    
+    if [[ "$(uname)" == "Darwin" ]]; then
+        # macOS
+        CPU_CORES=$(sysctl -n hw.ncpu)
+        CPU_MODEL=$(sysctl -n machdep.cpu.brand_string)
+        # On Apple Silicon, use a different approach
+        if [[ "$CPU_MODEL" == *"Apple"* ]]; then
+            # Assign a high score for Apple Silicon
+            CPU_SCORE=20  # M1/M2 chips are very capable
+        else
+            CPU_SPEED=$(sysctl -n hw.cpufrequency_max)
+            CPU_SPEED=$((CPU_SPEED / 1000000)) # Convert to MHz
+            CPU_SCORE=$((CPU_CORES * CPU_SPEED / 1000))
+        fi
     else
-        if [ "$1" = "remote" ] || [ -z "$1" ]; then
-            echo "Warning: .env file not found. Remote setup will be skipped."
-            SKIP_REMOTE=true
-            return 0
-        fi
+        # Linux
+        CPU_CORES=$(nproc)
+        CPU_MODEL=$(grep "model name" /proc/cpuinfo | head -n1 | cut -d':' -f2 | xargs)
+        CPU_SPEED=$(grep "cpu MHz" /proc/cpuinfo | head -n1 | cut -d':' -f2 | xargs | cut -d'.' -f1)
+        CPU_SCORE=$((CPU_CORES * CPU_SPEED / 1000))
     fi
     
-    # Validate required environment variables for remote setup
-    if [ "$1" = "remote" ] || [ -z "$1" ]; then
-        if [ -z "$REMOTE_HOST" ] || [ -z "$REMOTE_USER" ]; then
-            if [ "$1" = "remote" ]; then
-                echo "Error: REMOTE_HOST and REMOTE_USER must be set in .env file for remote setup"
-                exit 1
-            else
-                echo "Warning: Remote configuration not found in .env file. Remote setup will be skipped."
-                SKIP_REMOTE=true
-                return 0
-            fi
+    # Print info
+    {
+        echo "CPU_MODEL=$CPU_MODEL"
+        echo "CPU_CORES=$CPU_CORES"
+        if [[ "$CPU_MODEL" != *"Apple"* ]]; then
+            echo "CPU_SPEED=$CPU_SPEED"
         fi
-        
-        # Set default SSH port if not specified
-        REMOTE_PORT=${REMOTE_PORT:-22}
-        
-        # Construct remote connection string
-        REMOTE_CONNECTION="$REMOTE_USER@$REMOTE_HOST"
-        
-        # Set SSH options for key-based auth only
-        SSH_OPTS="-o BatchMode=yes -o PasswordAuthentication=no -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o ServerAliveInterval=30"
-        SCP_OPTS="-o BatchMode=yes -o PasswordAuthentication=no -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
-    fi
+        echo "CPU_SCORE=$CPU_SCORE"
+    } > ~/.mori/cpu_info.txt
+    
+    echo "$CPU_SCORE"
 }
 
-# Function to check system requirements
-check_requirements() {
-    echo "Checking system requirements..."
+# Function to get memory info
+get_memory_info() {
+    local MEM_SCORE=0
+    local TOTAL_MEM=0
+    local FREE_MEM=0
     
-    # Check for curl
-    if ! command -v curl &> /dev/null; then
-        echo "Error: curl is required but not installed"
-        exit 1
-    fi
-    
-    # Check for ssh and scp for remote setup
-    if [ "$1" = "remote" ] || [ -z "$1" ]; then
-        if ! command -v ssh &> /dev/null || ! command -v scp &> /dev/null; then
-            if [ "$1" = "remote" ]; then
-                echo "Error: ssh and scp are required for remote setup but not installed"
-                exit 1
-            else
-                echo "Warning: ssh and scp not found. Remote setup will be skipped."
-                SKIP_REMOTE=true
-                return 0
-            fi
-        fi
-        
-        # Check for SSH key
-        if [ ! -f ~/.ssh/id_rsa ] && [ ! -f ~/.ssh/id_ed25519 ]; then
-            echo "No SSH key found. Generating a new ED25519 key..."
-            ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
-            
-            if [ $? -ne 0 ]; then
-                echo "Error: Failed to generate SSH key"
-                SKIP_REMOTE=true
-                return 1
-            fi
-            
-            echo "SSH key generated. Please add this public key to your remote server's authorized_keys:"
-            cat ~/.ssh/id_ed25519.pub
-            echo ""
-            echo "You can add it to your remote server using:"
-            echo "ssh-copy-id -i ~/.ssh/id_ed25519.pub $REMOTE_USER@$REMOTE_HOST"
-            echo ""
-            echo "After adding the key, run this script again."
-            SKIP_REMOTE=true
-            return 0
-        fi
-    fi
-    
-    # Check available disk space (minimum 2GB)
-    available_space=$(df -P . | awk 'NR==2 {print $4}')
-    if [ "$available_space" -lt 2097152 ]; then  # 2GB in KB
-        echo "Error: Insufficient disk space. At least 2GB required"
-        exit 1
-    fi
-    
-    echo "System requirements met"
-}
-
-# Function to check if Ollama is already installed
-check_ollama() {
-    if command -v ollama >/dev/null 2>&1; then
-        echo "Ollama is already installed"
-        return 0
-    fi
-    return 1
-}
-
-# Function to install Ollama
-install_ollama() {
-    echo "Installing Ollama..."
-    curl -fsSL https://ollama.com/install.sh | sh
-    
-    # Check if installation was successful
-    if [ $? -eq 0 ]; then
-        echo "Ollama installed successfully"
+    if [[ "$(uname)" == "Darwin" ]]; then
+        # macOS
+        TOTAL_MEM=$(sysctl -n hw.memsize)
+        TOTAL_MEM=$((TOTAL_MEM / 1024 / 1024)) # Convert to MB
+        # For macOS, use a percentage of total memory as score
+        MEM_SCORE=$((TOTAL_MEM / 1024))  # Convert to GB for score
     else
-        echo "Failed to install Ollama"
-        exit 1
+        # Linux
+        TOTAL_MEM=$(free -m | awk '/Mem:/ {print $2}')
+        FREE_MEM=$(free -m | awk '/Mem:/ {print $4}')
+        MEM_SCORE=$((FREE_MEM / 1024))
     fi
-}
-
-# Function to manage Ollama service
-manage_ollama_service() {
-    local max_retries=3
-    local retry_count=0
     
-    # Kill any existing Ollama processes
-    if pgrep -x "ollama" > /dev/null; then
-        echo "Stopping existing Ollama service..."
-        pkill ollama
-        sleep 2
-    fi
-
-    # Check if port 11434 is in use by another process
-    while lsof -i:11434 > /dev/null 2>&1; do
-        echo "Port 11434 is in use. Attempting to free it..."
-        pkill -f "ollama"
-        sleep 2
-        
-        ((retry_count++))
-        if [ $retry_count -ge $max_retries ]; then
-            echo "Error: Unable to free port 11434 after $max_retries attempts"
-            echo "Please manually check what process is using port 11434:"
-            echo "lsof -i:11434"
-            exit 1
+    # Print info
+    {
+        echo "TOTAL_MEM=$TOTAL_MEM"
+        if [[ "$(uname)" != "Darwin" ]]; then
+            echo "FREE_MEM=$FREE_MEM"
         fi
-    done
+        echo "MEM_SCORE=$MEM_SCORE"
+    } > ~/.mori/mem_info.txt
     
-    echo "Starting Ollama service..."
-    ollama serve &
-    sleep 5
+    echo "$MEM_SCORE"
+}
+
+# Function to check GPU availability
+check_gpu() {
+    local GPU_TYPE=0
+    local GPU_INFO=""
     
-    # Verify service is running
-    if ! pgrep -x "ollama" > /dev/null; then
-        echo "Error: Ollama service failed to start"
-        exit 1
-    fi
-    
-    # Verify port is accessible
-    retry_count=0
-    while ! curl -s http://localhost:11434/api/version >/dev/null 2>&1; do
-        sleep 2
-        ((retry_count++))
-        if [ $retry_count -ge $max_retries ]; then
-            echo "Error: Ollama service is not responding on port 11434"
-            exit 1
+    if [[ "$(uname)" == "Darwin" ]]; then
+        # Check for Metal support on macOS
+        if system_profiler SPDisplaysDataType | grep -q "Metal"; then
+            GPU_INFO=$(system_profiler SPDisplaysDataType | grep "Chipset Model" | cut -d':' -f2 | xargs)
+            echo "GPU: $GPU_INFO (Metal supported)"
+            GPU_TYPE=1
         fi
-        echo "Waiting for Ollama service to become responsive..."
-    done
-}
-
-# Function to verify Ollama installation
-verify_installation() {
-    echo "Verifying Ollama installation..."
-    if ! check_ollama; then
-        echo "Error: Ollama installation verification failed"
-        exit 1
+    else
+        # Check for NVIDIA GPU on Linux
+        if command_exists nvidia-smi; then
+            GPU_INFO=$(nvidia-smi --query-gpu=gpu_name --format=csv,noheader)
+            echo "GPU: $GPU_INFO"
+            GPU_TYPE=2
+        fi
     fi
     
-    manage_ollama_service
-    echo "Ollama installation verified successfully"
+    # Print info
+    {
+        echo "GPU_INFO=$GPU_INFO"
+        echo "GPU_TYPE=$GPU_TYPE"
+    } > ~/.mori/gpu_info.txt
+    
+    echo "$GPU_TYPE"
 }
 
-# Function for local setup
-local_setup() {
-    echo "Setting up Ollama locally..."
+# Function to determine optimal model based on system capabilities
+determine_optimal_model() {
+    local CPU_SCORE=$1
+    local MEM_SCORE=$2
+    local GPU_TYPE=$3
     
-    if ! check_ollama; then
-        install_ollama
+    # Print system info
+    echo "System Scores:"
+    if [ -f ~/.mori/cpu_info.txt ]; then
+        cat ~/.mori/cpu_info.txt
+    fi
+    if [ -f ~/.mori/mem_info.txt ]; then
+        cat ~/.mori/mem_info.txt
+    fi
+    if [ -f ~/.mori/gpu_info.txt ]; then
+        cat ~/.mori/gpu_info.txt
     fi
     
-    verify_installation
+    local BEST_MODEL=""
     
-    # Pull the default model
-    echo "Pulling the default coding model..."
-    ollama pull codellama
+    # For Apple Silicon, prefer the most capable model
+    if [[ "$(uname)" == "Darwin" ]] && [[ "$(sysctl -n machdep.cpu.brand_string)" == *"Apple"* ]]; then
+        BEST_MODEL="codellama:7b-instruct-q4_K_M"
+    else
+        # Select model based on available resources
+        if [ "$CPU_SCORE" -ge 8 ] && [ "$MEM_SCORE" -ge 16 ]; then
+            BEST_MODEL="codellama:7b-instruct-q4_K_M"
+        elif [ "$CPU_SCORE" -ge 6 ] && [ "$MEM_SCORE" -ge 12 ]; then
+            BEST_MODEL="llama2:7b-chat-q4_K_M"
+        else
+            BEST_MODEL="mistral:7b-instruct-q4_K_M"
+        fi
+    fi
     
-    echo "Local setup completed successfully"
+    echo "Selected model: $BEST_MODEL"
+    echo "$BEST_MODEL" > ~/.mori/optimal_model.txt
+    
+    # Save complete system info
+    {
+        echo "# System Information"
+        echo "TIMESTAMP=$(date +%s)"
+        echo ""
+        echo "# CPU Information"
+        cat ~/.mori/cpu_info.txt
+        echo ""
+        echo "# Memory Information"
+        cat ~/.mori/mem_info.txt
+        echo ""
+        echo "# GPU Information"
+        cat ~/.mori/gpu_info.txt
+        echo ""
+        echo "# Selected Model"
+        echo "OPTIMAL_MODEL=$BEST_MODEL"
+    } > ~/.mori/system_info.txt
 }
 
-# Function for remote setup
-remote_setup() {
-    if [ "$SKIP_REMOTE" = true ]; then
-        echo "Skipping remote setup due to missing requirements or configuration"
-        return 0
-    fi
+# Run system analysis
+echo "Analyzing system capabilities..."
+CPU_SCORE=$(get_cpu_info)
+MEM_SCORE=$(get_memory_info)
+check_gpu
+GPU_TYPE=$?
 
-    echo "Setting up Ollama on remote host: $REMOTE_CONNECTION (port: $REMOTE_PORT)"
-    
-    # Test SSH connection with timeout
-    echo "Testing SSH connection..."
-    if ! ssh $SSH_OPTS -p "$REMOTE_PORT" "$REMOTE_CONNECTION" "echo 'SSH connection successful'"; then
-        echo "Error: Cannot connect to remote host. Please check:"
-        echo "1. SSH key is properly added to remote host's authorized_keys"
-        echo "2. Remote host is reachable"
-        echo "3. Port $REMOTE_PORT is open"
-        echo "4. Username $REMOTE_USER has access"
-        return 1
-    fi
-    
-    # Copy this script to remote host
-    echo "Copying setup script to remote host..."
-    scp $SCP_OPTS -P "$REMOTE_PORT" "$0" "$REMOTE_CONNECTION:/tmp/ollama_setup.sh"
-    
-    # Execute the script remotely for local setup
-    echo "Running setup on remote host..."
-    ssh $SSH_OPTS -p "$REMOTE_PORT" "$REMOTE_CONNECTION" "bash /tmp/ollama_setup.sh local && rm /tmp/ollama_setup.sh"
-    
-    echo "Remote setup completed successfully"
-}
+# Determine optimal model
+determine_optimal_model "$CPU_SCORE" "$MEM_SCORE" "$GPU_TYPE"
 
-# Function to setup everything
-setup_all() {
-    echo "Starting Ollama setup..."
-    
-    # First setup locally
-    local_setup
-    
-    # Then setup remotely if possible
-    if [ "$SKIP_REMOTE" != true ]; then
-        echo "Starting remote setup..."
-        remote_setup
-    fi
-    
-    echo "Setup process completed!"
-}
+# Create or update .env file with optimal settings
+if [ -f .env ]; then
+    # Backup existing .env
+    cp .env .env.backup
+fi
 
-# Main script execution
-case "$1" in
-    "local")
-        check_requirements "local"
-        load_env "local"
-        local_setup
-        ;;
-    "remote")
-        check_requirements "remote"
-        load_env "remote"
-        remote_setup
-        ;;
-    "")
-        check_requirements
-        load_env
-        setup_all
-        ;;
-    *)
-        echo "Usage: $0 [local|remote]"
-        echo "Examples:"
-        echo "  Complete setup:      $0"
-        echo "  Local installation:  $0 local"
-        echo "  Remote installation: $0 remote (uses settings from .env file)"
-        exit 1
-        ;;
-esac
+OPTIMAL_MODEL=$(cat ~/.mori/optimal_model.txt)
 
-# Print success message
-if [ "$1" = "remote" ] || ([ -z "$1" ] && [ "$SKIP_REMOTE" != true ]); then
-    echo "
-Setup completed successfully!
-To use Ollama, you can:
-1. Run 'ollama run codellama' to start a chat session
-2. Use the API endpoint at http://localhost:11434
-3. Connect to the remote instance at $REMOTE_HOST:11434
+# Update .env file
+cat > .env << EOL
+# Remote server configuration
+REMOTE_HOST="${REMOTE_HOST:-localhost}"
+REMOTE_USER="${REMOTE_USER:-$USER}"
+REMOTE_PORT="${REMOTE_PORT:-22}"
 
-For remote access, make sure port 11434 is open on the remote machine.
-"
-else
-    echo "
-Setup completed successfully!
-To use Ollama, you can:
-1. Run 'ollama run codellama' to start a chat session
-2. Use the API endpoint at http://localhost:11434
-"
-fi 
+# Ollama configuration
+OLLAMA_HOST="${OLLAMA_HOST:-localhost}"
+OLLAMA_PORT="${OLLAMA_PORT:-11434}"
+OLLAMA_MODEL="$OPTIMAL_MODEL"
+OLLAMA_REMOTE="${OLLAMA_REMOTE:-false}"
+
+# Agent configuration
+DEFAULT_ITERATIONS="${DEFAULT_ITERATIONS:-25}"
+EOL
+
+echo "Setup complete! Optimal model selected: $OPTIMAL_MODEL" 
